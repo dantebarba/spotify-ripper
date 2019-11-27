@@ -17,6 +17,13 @@ RUN apt install lame libffi-dev -y --no-install-recommends
 
 RUN apt install python-dev python-pip -y --no-install-recommends
 
+ENV PYTHONIOENCODING utf-8
+
+RUN apt-get update && apt-get -y install locales
+RUN locale-gen en_GB.UTF-8
+ENV LANG='en_GB.UTF-8' LANGUAGE='en_GB:en' LC_ALL='en_GB.UTF-8'
+
+
 #RUN wget https://github.com/nu774/fdkaac/archive/v0.6.2.tar.gz && tar xvf v0.6.2.tar.gz
 #RUN cd fdkaac-0.6.2 && autoreconf -i && ./configure && make install
 
@@ -44,13 +51,6 @@ ENV SPOTIPY_CLIENT_SECRET=
 
 VOLUME /config
 VOLUME /music
-
-ENV PYTHONIOENCODING utf-8
-
-
-RUN apt-get update && apt-get -y install locales
-RUN locale-gen en_GB.UTF-8
-ENV LANG='en_GB.UTF-8' LANGUAGE='en_GB:en' LC_ALL='en_GB.UTF-8'
 
 WORKDIR /root/workdir
 
