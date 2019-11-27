@@ -58,7 +58,7 @@ class Ripper(threading.Thread):
     dev_null = None
     stop_time = None
     track_path_cache = {}
-
+    playlist_uri = None
     rip_queue = queue.Queue()
 
     # threading events
@@ -83,42 +83,45 @@ class Ripper(threading.Thread):
         # initially logged-out
         self.logged_out.set()
 
-        self.config = spotify.Config()
+        config = spotify.Config()
         default_dir = default_settings_dir()
 
         self.post = PostActions(args, self)
-        #self.web = WebAPI(args, self)
+        self.web = WebAPI(args, self)
 
         proxy = os.environ.get('http_proxy')
         if proxy is not None:
-            self.config.proxy = proxy
+            config.proxy = proxy
 
         # application key location
         if args.key is not None:
-            self.config.load_application_key_file(args.key)
+            config.load_application_key_file(args.key)
         else:
             if not path_exists(default_dir):
                 os.makedirs(enc_str(default_dir))
 
             app_key_path = os.path.join(default_dir, "spotify_appkey.key")
             if not path_exists(app_key_path):
-                print("\n" + Fore.YELLOW + "Please copy your spotify_appkey.key to " +
-                      default_dir + ", or use the --key|-k option" + Fore.RESET)
+                print("\n" + Fore.YELLOW +
+                      "Please copy your spotify_appkey.key to " +
+                      default_dir + ", or use the --key|-k option" +
+                      Fore.RESET)
                 sys.exit(1)
 
-            self.config.load_application_key_file(app_key_path)
+            config.load_application_key_file(app_key_path)
 
         # settings directory
         if args.settings is not None:
             settings_dir = norm_path(args.settings)
-            self.config.settings_location = settings_dir
-            self.config.cache_location = settings_dir
+            config.settings_location = settings_dir
+            config.cache_location = settings_dir
         else:
-            self.config.settings_location = default_dir
-            self.config.cache_location = default_dir
+            config.settings_location = default_dir
+            config.cache_location = default_dir
 
-        self.session = spotify.Session(config=self.config)
+        self.session = spotify.Session(config=config)
         self.session.volume_normalization = args.normalize
+
 
         # disable scrobbling
         self.session.social.set_scrobbling(
@@ -146,7 +149,8 @@ class Ripper(threading.Thread):
                         self.play_token_lost)
         self.session.on(spotify.SessionEvent.LOGGED_IN,
                         self.on_logged_in)
-        
+
+
         self.event_loop = EventLoop(self.session, 0.1, self)
 
     def stop_event_loop(self):
@@ -172,7 +176,6 @@ class Ripper(threading.Thread):
             else:
                 self.login_as_user(args.user, args.password)
 
-        self.web = WebAPI(args, self)
         return self.login_success
 
     def run(self):
@@ -185,10 +188,11 @@ class Ripper(threading.Thread):
         self.ripper_continue.wait()
         if self.abort.is_set():
             return
+        #set session to provate
+        self.session.social.private_session = True
 
         # list of spotify URIs
         uris = args.uri
-        
 
         # check fo playlist by name option
         if args.playlist:
@@ -198,9 +202,7 @@ class Ripper(threading.Thread):
         # if uris is a playlist, substitute for list of tracks
         self.playlist_name = None
         self.playlist_owner = None
-        if ":playlist:" in uris[0]:
-            uris = self.web.get_playlist_tracks(self, uris[0])
-            
+
         def get_tracks_from_uri(uri):
             self.current_playlist = None
             self.current_album = None
@@ -231,23 +233,27 @@ class Ripper(threading.Thread):
 
         # calculate total size and time
         all_tracks = []
-        for uri in uris:
-            tracks = list(get_tracks_from_uri(uri))
+        #for uri in uris:
+        #    tracks = list(get_tracks_from_uri(uri))
+        #    print(tracks)
 
-            # TODO: remove dependency on current_album, ...
-            for idx, track in enumerate(tracks):
+        #    # TODO: remove dependency on current_album, ...
+        #    for idx, track in enumerate(tracks):
 
-                # ignore local tracks
-                if track.is_local:
-                    continue
+        #        print(track)
+        #        # ignore local tracks
+        #        if track.is_local:
+        #            continue
 
-                audio_file = self.format_track_path(idx, track)
-                all_tracks.append((track, audio_file))
+        #        audio_file = self.format_track_path(idx, track)
+        #        all_tracks.append((track, audio_file))
 
-        self.progress.calc_total(all_tracks)
+        #self.progress.calc_total(all_tracks)
 
-        if self.progress.total_size > 0:
-            print("Total Download Size: " + format_size(self.progress.total_size))
+        #if self.progress.total_size > 0:
+        #    print(
+        #        "Total Download Size: " +
+        #        format_size(self.progress.total_size))
 
         # create track iterator
         for uri in uris:
@@ -255,10 +261,6 @@ class Ripper(threading.Thread):
                 break
 
             tracks = list(get_tracks_from_uri(uri))
-
-            if args.playlist_sync and self.current_playlist:
-                self.sync = Sync(args, self)
-                self.sync.sync_playlist(self.current_playlist)
 
             # ripping loop
             for idx, track in enumerate(tracks):
@@ -269,14 +271,14 @@ class Ripper(threading.Thread):
                     if self.abort.is_set():
                         break
 
-                    # before we skip or can fail loading the track
-                    self.progress.increment_track_idx()
-
                     print('Loading track...')
                     track.load(args.timeout)
                     if track.availability != 1 or track.is_local:
-                        print(Fore.RED + 'Track is not available, skipping...' + Fore.RESET)
+                        print(
+                            Fore.RED + 'Track is not available, '
+                                       'skipping...' + Fore.RESET)
                         self.post.log_failure(track)
+                        self.progress.track_idx += 1
                         continue
 
                     self.audio_file = self.format_track_path(idx, track)
@@ -285,12 +287,12 @@ class Ripper(threading.Thread):
                         if is_partial(self.audio_file, track):
                             print("Overwriting partial file")
                         else:
-                            print(Fore.YELLOW + "Skipping " + track.link.uri + Fore.RESET)
+                            print(
+                                Fore.YELLOW + "Skipping " +
+                                track.link.uri + Fore.RESET)
                             print(Fore.CYAN + self.audio_file + Fore.RESET)
                             self.post.queue_remove_from_playlist(idx)
-                            if args.update_metadata is not None:
-                                # update id3v2 with metadata and embed front cover image
-                                set_metadata_tags(args, self.audio_file, idx, track, self)
+                            self.progress.track_idx += 1
                             continue
 
                     self.session.player.load(track)
@@ -320,7 +322,8 @@ class Ripper(threading.Thread):
                     if self.skip.is_set():
                         extra_line = "" if self.play_token_resume.is_set() \
                                         else "\n"
-                        print(extra_line + Fore.YELLOW + "User skipped track... " + Fore.RESET)
+                        print(extra_line + Fore.YELLOW +
+                            "User skipped track... " + Fore.RESET)
                         self.session.player.play(False)
                         self.post.clean_up_partial()
                         self.post.log_failure(track)
@@ -360,7 +363,7 @@ class Ripper(threading.Thread):
                     self.post.clean_up_partial()
                     self.post.log_failure(track)
                     continue
-                    
+                
         if self.playlist_name is not None:
             # Mocking current_playlist
             class Dummy: pass
@@ -395,6 +398,7 @@ class Ripper(threading.Thread):
         self.logout()
         self.stop_event_loop()
         self.finished.set()
+        sys.exit()
 
     def check_stop_time(self):
         args = self.args
@@ -438,52 +442,53 @@ class Ripper(threading.Thread):
         # ignore if the uri is just blank (e.g. from a file)
         if not uri:
             return iter([])
-
+        trackList = []
+        uriList = []
         args = self.args
         link = self.session.get_link(uri)
+        track_list = []
         if link.type == spotify.LinkType.TRACK:
             track = link.as_track()
             return iter([track])
-            '''
-        # Plylists are now handled in run loop
         elif link.type == spotify.LinkType.PLAYLIST:
-            #self.current_playlist = link.as_playlist()
-            playlist_tracks = self.web.get_playlist_tracks(uri)
-            self.current_playlist = self.session.get_playlist(uri)
-            attempt_count = 1
-            while self.current_playlist is None:
-                if attempt_count > 3:
-                    print(Fore.RED + "Could not load playlist..." +
-                          Fore.RESET)
-                    return iter([])
-                print("Attempt " + str(attempt_count) + " failed: Spotify " +
-                      "returned None for playlist, trying again in 5 " +
-                      "seconds...")
-                time.sleep(5.0)
-                self.current_playlist = link.as_playlist()
-                attempt_count += 1
-
-            print('Loading playlist...', args.timeout)
-            #self.current_playlist.load(args.timeout)
-            self.current_playlist.load()
-            print('Finished loading playlist...'+self.current_playlist.name,len(self.current_playlist.tracks))
-            return iter(self.current_playlist.tracks)
-            return iter(playlist_tracks)
-            '''
+            playlist_tracks = self.web.get_playlist_tracks(self, uri)
+            #self.current_playlist = self.session.get_playlist(uri)
+            for i in playlist_tracks:
+                uriList.append(i)
+            #self.playlist_uri = uri
+            #self.current_playlist = get_playlist(self.session.user.canonical_name, uri)
+            #track_list = self.current_playlist['tracks'].get('items')
+            #for n in track_list:
+            #    thisTrack = n.get('track')
+            #    thisTrackuri = thisTrack.get('uri')
+            #    uriList.append(thisTrackuri)
+            tracksIter = iter(uriList)
+            for i in tracksIter:
+                trackList.append(self.session.get_link(i).as_track())
+            # Mocking current_playlist
+            class Dummy: pass
+            #tracks = [x[0] for x in iter(trackList)]
+            self.current_playlist = Dummy()
+            self.current_playlist.name = self.playlist_name
+            self.current_playlist.tracks = trackList
+            self.current_playlist.link = Dummy()
+            self.current_playlist.link.uri = self.args.uri[0]
+            self.current_playlist.load = lambda a : a
+            return iter(trackList)
+            #return list(uris)
         elif link.type == spotify.LinkType.STARRED:
             link_user = link.as_user()
-
             def load_starred():
                 if link_user is not None:
                     return self.session.get_starred(link_user.canonical_name)
                 else:
                     return self.session.get_starred()
             starred = load_starred()
-
             attempt_count = 1
             while starred is None:
                 if attempt_count > 3:
-                    print(Fore.RED + "Could not load starred playlist..." + Fore.RESET)
+                    print(Fore.RED + "Could not load starred playlist..." +
+                          Fore.RESET)
                     return iter([])
                 print("Attempt " + str(attempt_count) + " failed: Spotify " +
                       "returned None for starred playlist, trying again in " +
@@ -491,7 +496,6 @@ class Ripper(threading.Thread):
                 time.sleep(5.0)
                 starred = load_starred()
                 attempt_count += 1
-
             print('Loading starred playlist...')
             starred.load(args.timeout)
             return iter(starred.tracks)
@@ -568,7 +572,8 @@ class Ripper(threading.Thread):
             self.rip_queue.put_nowait((audio_format.sample_rate,
                                        frame_bytes, num_frames))
         except queue.Full:
-            print(Fore.RED + "rip_queue is full. dropped music data" + Fore.RESET)
+            print(Fore.RED + "rip_queue is full. dropped music data" +
+                  Fore.RESET)
         return num_frames
 
     def on_connection_state_changed(self, session):
@@ -631,6 +636,7 @@ class Ripper(threading.Thread):
         """logout from Spotify"""
         time.sleep(0.1)
         if self.logged_in.is_set():
+            print('Logging out...')
             self.session.logout()
             self.logged_out.wait()
 
@@ -680,8 +686,7 @@ class Ripper(threading.Thread):
             audio_file = re.sub('[:"*?<>|]', '', audio_file)
 
         # prepend base_dir
-        #audio_file = to_ascii(os.path.join(base_dir(), audio_file))
-        audio_file = os.path.join(base_dir(), audio_file)
+        audio_file = to_ascii(os.path.join(base_dir(), audio_file))
 
         if args.normalized_ascii:
             audio_file = to_normalized_ascii(audio_file)
@@ -824,7 +829,9 @@ class Ripper(threading.Thread):
             # wait for process to end before continuing
             ret_code = self.rip_proc.wait()
             if ret_code != 0:
-                print(Fore.YELLOW + "Warning: encoder returned non-zero error code " + str(ret_code) + Fore.RESET)
+                print(
+                    Fore.YELLOW + "Warning: encoder returned non-zero "
+                                  "error code " + str(ret_code) + Fore.RESET)
             self.rip_proc = None
             self.pipe = None
 
