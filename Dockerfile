@@ -10,7 +10,7 @@ RUN apt-add-repository multiverse -y
 RUN apt update -y
 
 RUN apt install build-essential automake autoconf wget -y --no-install-recommends
-RUN apt install lame libffi-dev -y --no-install-recommends
+RUN apt install lame libffi-dev vorbis-tools flac avconv opus-tools faac -y --no-install-recommends
 
 #libssl-dev flac libav-tools faac libfdk-aac-dev vorbis-tools opus-tools \
 #        -y --no-install-recommends
